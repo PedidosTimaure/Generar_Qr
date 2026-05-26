@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="description" content="Generador de códigos QR profesional y personalizable. Crea QR con logotipos, colores y degradados.">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>QR Studio Pro</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+    const {useState,useEffect,useRef,useCallback} = React;
+
+    const DATA_TYPES = [
+      {id:'url',label:'🔗 URL',icon:'🔗'},
+      {id:'text',label:'📝 Texto',icon:'📝'},
+      {id:'wifi',label:'📶 WiFi',icon:'📶'},
+      {id:'vcard',label:'👤 Contacto',icon:'👤'},
+      {id:'whatsapp',label:'💬 WhatsApp',icon:'💬'},
+      {id:'email',label:'📧 Email',icon:'📧'}
+    ];
+
+    const DOT_STYLES = ['rounded','dots','classy','classy-rounded','square','extra-rounded'];
+    const CORNER_STYLES = ['dot','square','extra-rounded'];
+    const CORNER_DOT_STYLES = ['dot','square'];
+
+    function buildQRData(type, fields) {
+      switch(type) {
+        case 'url': return fields.url || 'https://example.com';
+        case 'text': return fields.text || 'Hola Mundo';
+        case 'wifi':
+          return `WIFI:T:${fields.wifiSecurity||'WPA'};S:${fields.wifiSSID||''};P:${fields.wifiPassword||''};;`;
+        case 'vcard':
+          return `BEGIN:VCARD\nVERSION:3.0\nFN:${fields.vcName||''}\nTEL:${fields.vcPhone||''}\nEMAIL:${fields.vcEmail||''}\nORG:${fields.vcOrg||''}\nEND:VCARD`;
+        case 'whatsapp':
+          return `https://wa.me/${(fields.waPhone||'').replace(/\D/g,'')}?text=${encodeURIComponent(fields.waMessage||'')}`;
+        case 'email':
+          return `mailto:${fields.emAddr||''}?subject=${encodeURIComponent(fields.emSubject||'')}&body=${encodeURIComponent(fields.emBody||'')}`;
+        default: return 'https://example.com';
+      }
+    }
+
+    function Section({title,icon,children,defaultOpen=true}) {
+      const [open,setOpen] = useState(defaultOpen);
+      return React.createElement('div',{className:'form-group'},
+        React.createElement('button',{className:'section-toggle',onClick:()=>setOpen(!open)},
+          React.createElement('span',null,icon,' ',title),
+          React.createElement('span',{className:'arrow'+(open?' open':'')},open?'▲':'▼')
+        ),
+        React.createElement('div',{className:'section-content',style:{maxHeight:open?'2000px':'0',overflow:'hidden'}},children)
+      );
+    }
+
+    function ColorPicker({label,value,onChange}) {
+      return React.createElement('div',{className:'form-group'},
+        label && React.createElement('label',null,label),
+        React.createElement('div',{className:'color-row'},
+          React.createElement('div',{className:'color-swatch'},
+            React.createElement('input',{type:'color',value:value,onChange:e=>onChange(e.target.value)})
+          ),
+          React.createElement('input',{className:'color-hex',value:value,onChange:e=>onChange(e.target.value),maxLength:7})
+        )
+      );
+    }
+
+    function App() {
+      const [dataType,setDataType] = useState('url');
+      const [fields,setFields] = useState({url:'https://www.climaster.uy'});
+      const [dotType,setDotType] = useState('rounded');
+      const [dotColor,setDotColor] = useState('#6366f1');
+      const [bgColor,setBgColor] = useState('#ffffff');
+      const [cornerType,setCornerType] = useState('extra-rounded');
+      const [cornerColor,setCornerColor] = useState('#4f46e5');
+      const [cornerDotType,setCornerDotType] = useState('dot');
+      const [cornerDotColor,setCornerDotColor] = useState('#7c3aed');
+      const [logoSrc,setLogoSrc] = useState('');
+      const [logoSize,setLogoSize] = useState(0.35);
+      const [logoMargin,setLogoMargin] = useState(5);
+      const [hideBgDots,setHideBgDots] = useState(true);
+      const [qrSize,setQrSize] = useState(280);
+      const [stickerText,setStickerText] = useState('');
+      const [stickerPos,setStickerPos] = useState('bottom');
+      const [stickerFontSize,setStickerFontSize] = useState(18);
+      const [stickerColor,setStickerColor] = useState('#1e293b');
+      const [stickerFont,setStickerFont] = useState('Outfit');
+      const [dlFormat,setDlFormat] = useState('png');
+      const [toast,setToast] = useState('');
+      const [installPrompt,setInstallPrompt] = useState(null);
+      const [showInstall,setShowInstall] = useState(false);
+
+      const qrRef = useRef(null);
+      const qrInstance = useRef(null);
+      const containerRef = useRef(null);
+
+      const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(''),2500); };
+
+      const updateField = (key,val) => setFields(prev=>({...prev,[key]:val}));
+
+      // PWA Install
+      useEffect(()=>{
+        if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js').catch(()=>{});}
+        const handler = e=>{e.preventDefault();setInstallPrompt(e);setShowInstall(true);};
+        window.addEventListener('beforeinstallprompt',handler);
+        return ()=>window.removeEventListener('beforeinstallprompt',handler);
+      },[]);
+
+      const handleInstall = async()=>{
+        if(!installPrompt)return;
+        installPrompt.prompt();
+        const result=await installPrompt.userChoice;
+        if(result.outcome==='accepted')showToast('✅ App instalada');
+        setShowInstall(false);setInstallPrompt(null);
+      };
+
+      // QR creation & updates
+      useEffect(()=>{
+        const qr = new QRCodeStyling({width:qrSize,height:qrSize,data:buildQRData(dataType,fields),
+          type:'canvas',
+          dotsOptions:{color:dotColor,type:dotType},
+          backgroundOptions:{color:bgColor},
+          cornersSquareOptions:{type:cornerType,color:cornerColor},
+          cornersDotOptions:{type:cornerDotType,color:cornerDotColor},
+          imageOptions:{crossOrigin:'anonymous',margin:logoMargin,imageSize:logoSize,hideBackgroundDots:hideBgDots},
+          image:logoSrc||undefined,
+          qrOptions:{errorCorrectionLevel:'H'}
+        });
+        qrInstance.current = qr;
+        if(containerRef.current){containerRef.current.innerHTML='';qr.append(containerRef.current);}
+      },[dataType,fields,dotType,dotColor,bgColor,cornerType,cornerColor,cornerDotType,cornerDotColor,logoSrc,logoSize,logoMargin,hideBgDots,qrSize]);
+
+      const handleLogoUpload = (e) => {
+        const file = e.target.files[0];
+        if(!file)return;
+        const reader = new FileReader();
+        reader.onload = ev => setLogoSrc(ev.target.result);
+        reader.readAsDataURL(file);
+      };
+
+      const downloadQR = () => {
+        if(!qrInstance.current)return;
+        if(!stickerText.trim()){
+          qrInstance.current.download({name:'qr-studio',extension:dlFormat});
+          showToast('⬇️ QR descargado');
+          return;
+        }
+        // Sticker with text
+        qrInstance.current.getRawData('png').then(blob=>{
+          const reader=new FileReader();
+          reader.onload=ev=>{
+            const img=new Image();
+            img.onload=()=>{
+              const pad=40,textH=stickerFontSize+20;
+              const totalH=stickerPos==='both'?img.height+pad*2+textH*2:img.height+pad*2+textH;
+              const canvas=document.createElement('canvas');
+              canvas.width=img.width+pad*2;canvas.height=totalH;
+              const ctx=canvas.getContext('2d');
+              ctx.fillStyle=bgColor;ctx.fillRect(0,0,canvas.width,canvas.height);
+              let qrY=pad;
+              if(stickerPos==='top'||stickerPos==='both'){
+                ctx.fillStyle=stickerColor;ctx.font=`bold ${stickerFontSize}px ${stickerFont},sans-serif`;
+                ctx.textAlign='center';ctx.fillText(stickerText,canvas.width/2,pad+stickerFontSize);
+                qrY=pad+textH;
+              }
+              ctx.drawImage(img,pad,qrY);
+              if(stickerPos==='bottom'||stickerPos==='both'){
+                ctx.fillStyle=stickerColor;ctx.font=`bold ${stickerFontSize}px ${stickerFont},sans-serif`;
+                ctx.textAlign='center';ctx.fillText(stickerText,canvas.width/2,qrY+img.height+stickerFontSize+5);
+              }
+              const link=document.createElement('a');
+              link.download='qr-sticker.png';link.href=canvas.toDataURL('image/png');link.click();
+              showToast('⬇️ Sticker descargado');
+            };
+            img.src=ev.target.result;
+          };
+          reader.readAsDataURL(blob);
+        });
+      };
+
+      const shareQR = async()=>{
+        if(!navigator.share||!qrInstance.current)return showToast('Compartir no soportado');
+        try{
+          const blob=await qrInstance.current.getRawData('png');
+          const file=new File([blob],'qr-code.png',{type:'image/png'});
+          await navigator.share({files:[file],title:'Mi QR Code'});
+          showToast('✅ Compartido');
+        }catch(e){showToast('Compartir cancelado');}
+      };
+
+      const copyToClipboard = async()=>{
+        if(!qrInstance.current)return;
+        try{
+          const blob=await qrInstance.current.getRawData('png');
+          await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+          showToast('📋 Copiado al portapapeles');
+        }catch(e){showToast('Error al copiar');}
+      };
+
+      // --- Render data type fields ---
+      function renderDataFields() {
+        const inp = (key,label,placeholder,type='text') =>
+          React.createElement('div',{className:'form-group',key:key},
+            React.createElement('label',null,label),
+            React.createElement('input',{className:'form-input',type,placeholder,value:fields[key]||'',onChange:e=>updateField(key,e.target.value)})
+          );
+
+        switch(dataType){
+          case 'url': return inp('url','Dirección URL','https://www.ejemplo.com','url');
+          case 'text': return inp('text','Texto','Escribe tu mensaje aquí...');
+          case 'wifi': return React.createElement(React.Fragment,null,
+            inp('wifiSSID','Nombre de Red (SSID)','Mi WiFi'),
+            inp('wifiPassword','Contraseña','••••••••','password'),
+            React.createElement('div',{className:'form-group'},
+              React.createElement('label',null,'Seguridad'),
+              React.createElement('select',{className:'form-select',value:fields.wifiSecurity||'WPA',onChange:e=>updateField('wifiSecurity',e.target.value)},
+                React.createElement('option',{value:'WPA'},'WPA/WPA2'),
+                React.createElement('option',{value:'WEP'},'WEP'),
+                React.createElement('option',{value:'nopass'},'Sin contraseña')
+              )
+            )
+          );
+          case 'vcard': return React.createElement(React.Fragment,null,
+            inp('vcName','Nombre completo','Juan Pérez'),
+            inp('vcPhone','Teléfono','+598 99 123 456','tel'),
+            inp('vcEmail','Email','juan@ejemplo.com','email'),
+            inp('vcOrg','Empresa/Organización','Mi Empresa')
+          );
+          case 'whatsapp': return React.createElement(React.Fragment,null,
+            inp('waPhone','Número WhatsApp','+59899123456','tel'),
+            inp('waMessage','Mensaje predefinido','Hola, me interesa...')
+          );
+          case 'email': return React.createElement(React.Fragment,null,
+            inp('emAddr','Dirección email','info@ejemplo.com','email'),
+            inp('emSubject','Asunto','Consulta'),
+            inp('emBody','Mensaje','Hola, quería consultar...')
+          );
+        }
+      }
+
+      // --- Main render ---
+      return React.createElement(React.Fragment,null,
+        // Header
+        React.createElement('header',{className:'app-header'},
+          React.createElement('h1',null,'⚡ QR Studio Pro'),
+          React.createElement('p',null,'Generador de códigos QR profesional y personalizable')
+        ),
+
+        // Main container
+        React.createElement('div',{className:'app-container'},
+
+          // LEFT PANEL - Controls
+          React.createElement('div',{className:'panel',style:{maxHeight:'85vh',overflowY:'auto'}},
+
+            // Data Type tabs
+            React.createElement('div',{className:'panel-title'},React.createElement('span',{className:'icon'},'📊'),' Tipo de Datos'),
+            React.createElement('div',{className:'tabs'},
+              DATA_TYPES.map(t=>React.createElement('button',{
+                key:t.id,className:'tab-btn'+(dataType===t.id?' active':''),
+                onClick:()=>setDataType(t.id)
+              },t.label))
+            ),
+            renderDataFields(),
+
+            React.createElement('hr',{style:{border:'none',borderTop:'1px solid var(--border)',margin:'1rem 0'}}),
+
+            // Dot Style
+            Section({title:'Estilo de Puntos',icon:'🎨',defaultOpen:true,children:React.createElement(React.Fragment,null,
+              React.createElement('div',{className:'form-group'},
+                React.createElement('label',null,'Forma'),
+                React.createElement('div',{className:'style-chips'},
+                  DOT_STYLES.map(s=>React.createElement('button',{
+                    key:s,className:'style-chip'+(dotType===s?' active':''),
+                    onClick:()=>setDotType(s)
+                  },s))
+                )
+              ),
+              ColorPicker({label:'Color de puntos',value:dotColor,onChange:setDotColor}),
+              ColorPicker({label:'Color de fondo',value:bgColor,onChange:setBgColor})
+            )}),
+
+            // Corners
+            Section({title:'Ojos / Esquinas',icon:'👁️',defaultOpen:false,children:React.createElement(React.Fragment,null,
+              React.createElement('div',{className:'form-group'},
+                React.createElement('label',null,'Marco exterior'),
+                React.createElement('div',{className:'style-chips'},
+                  CORNER_STYLES.map(s=>React.createElement('button',{
+                    key:s,className:'style-chip'+(cornerType===s?' active':''),
+                    onClick:()=>setCornerType(s)
+                  },s))
+                )
+              ),
+              ColorPicker({label:'Color del marco',value:cornerColor,onChange:setCornerColor}),
+              React.createElement('div',{className:'form-group'},
+                React.createElement('label',null,'Pupila interior'),
+                React.createElement('div',{className:'style-chips'},
+                  CORNER_DOT_STYLES.map(s=>React.createElement('button',{
+                    key:s,className:'style-chip'+(cornerDotType===s?' active':''),
+                    onClick:()=>setCornerDotType(s)
+                  },s))
+                )
+              ),
+              ColorPicker({label:'Color de pupila',value:cornerDotColor,onChange:setCornerDotColor})
+            )}),
+
+            // Logo
+            Section({title:'Logotipo',icon:'🖼️',defaultOpen:false,children:React.createElement(React.Fragment,null,
+              !logoSrc ? React.createElement('div',{className:'logo-upload'},
+                React.createElement('input',{type:'file',accept:'image/*',onChange:handleLogoUpload}),
+                React.createElement('div',{className:'upload-icon'},'📤'),
+                React.createElement('p',null,'Arrastra o selecciona una imagen')
+              ) : React.createElement(React.Fragment,null,
+                React.createElement('div',{className:'logo-preview'},
+                  React.createElement('img',{src:logoSrc,alt:'Logo'}),
+                  React.createElement('button',{className:'remove-btn',onClick:()=>setLogoSrc('')},'✕ Quitar')
+                ),
+                React.createElement('div',{className:'form-group',style:{marginTop:'0.6rem'}},
+                  React.createElement('label',null,'Tamaño: '+Math.round(logoSize*100)+'%'),
+                  React.createElement('div',{className:'range-group'},
+                    React.createElement('input',{type:'range',min:'0.1',max:'0.5',step:'0.01',value:logoSize,onChange:e=>setLogoSize(parseFloat(e.target.value))}),
+                    React.createElement('span',{className:'range-val'},Math.round(logoSize*100)+'%')
+                  )
+                ),
+                React.createElement('div',{className:'form-group'},
+                  React.createElement('label',null,'Margen: '+logoMargin+'px'),
+                  React.createElement('div',{className:'range-group'},
+                    React.createElement('input',{type:'range',min:'0',max:'20',step:'1',value:logoMargin,onChange:e=>setLogoMargin(parseInt(e.target.value))}),
+                    React.createElement('span',{className:'range-val'},logoMargin+'px')
+                  )
+                ),
+                React.createElement('div',{className:'toggle-row'},
+                  React.createElement('button',{className:'toggle'+(hideBgDots?' on':''),onClick:()=>setHideBgDots(!hideBgDots)}),
+                  React.createElement('span',{className:'toggle-label'},'Ocultar puntos detrás del logo')
+                )
+              )
+            )}),
+
+            // Sticker
+            Section({title:'Texto / Sticker',icon:'🏷️',defaultOpen:false,children:React.createElement(React.Fragment,null,
+              React.createElement('div',{className:'form-group'},
+                React.createElement('label',null,'Texto del sticker'),
+                React.createElement('input',{className:'form-input',placeholder:'Ej: Escanéame!',value:stickerText,onChange:e=>setStickerText(e.target.value)})
+              ),
+              React.createElement('div',{className:'form-row'},
+                React.createElement('div',{className:'form-group'},
+                  React.createElement('label',null,'Posición'),
+                  React.createElement('select',{className:'form-select',value:stickerPos,onChange:e=>setStickerPos(e.target.value)},
+                    React.createElement('option',{value:'top'},'Arriba'),
+                    React.createElement('option',{value:'bottom'},'Abajo'),
+                    React.createElement('option',{value:'both'},'Ambos')
+                  )
+                ),
+                React.createElement('div',{className:'form-group'},
+                  React.createElement('label',null,'Fuente'),
+                  React.createElement('select',{className:'form-select',value:stickerFont,onChange:e=>setStickerFont(e.target.value)},
+                    React.createElement('option',{value:'Outfit'},'Outfit'),
+                    React.createElement('option',{value:'Inter'},'Inter'),
+                    React.createElement('option',{value:'Arial'},'Arial'),
+                    React.createElement('option',{value:'Georgia'},'Georgia')
+                  )
+                )
+              ),
+              React.createElement('div',{className:'form-group'},
+                React.createElement('label',null,'Tamaño: '+stickerFontSize+'px'),
+                React.createElement('div',{className:'range-group'},
+                  React.createElement('input',{type:'range',min:'10',max:'36',step:'1',value:stickerFontSize,onChange:e=>setStickerFontSize(parseInt(e.target.value))}),
+                  React.createElement('span',{className:'range-val'},stickerFontSize+'px')
+                )
+              ),
+              ColorPicker({label:'Color del texto',value:stickerColor,onChange:setStickerColor})
+            )}),
+
+            // Size
+            Section({title:'Tamaño del QR',icon:'📐',defaultOpen:false,children:
+              React.createElement('div',{className:'form-group'},
+                React.createElement('label',null,qrSize+'px × '+qrSize+'px'),
+                React.createElement('div',{className:'range-group'},
+                  React.createElement('input',{type:'range',min:'150',max:'500',step:'10',value:qrSize,onChange:e=>setQrSize(parseInt(e.target.value))}),
+                  React.createElement('span',{className:'range-val'},qrSize+'px')
+                )
+              )
+            })
+          ),
+
+          // RIGHT PANEL - Preview & Actions
+          React.createElement('div',{className:'panel qr-preview-area'},
+            React.createElement('div',{className:'panel-title'},React.createElement('span',{className:'icon'},'👀'),' Vista Previa'),
+
+            React.createElement('div',{className:'qr-frame',style:{backgroundColor:bgColor}},
+              stickerText && (stickerPos==='top'||stickerPos==='both') &&
+                React.createElement('div',{className:'sticker-text sticker-text-top',style:{
+                  fontFamily:stickerFont+',sans-serif',fontSize:stickerFontSize+'px',color:stickerColor
+                }},stickerText),
+              React.createElement('div',{className:'qr-render',ref:containerRef}),
+              stickerText && (stickerPos==='bottom'||stickerPos==='both') &&
+                React.createElement('div',{className:'sticker-text sticker-text-bottom',style:{
+                  fontFamily:stickerFont+',sans-serif',fontSize:stickerFontSize+'px',color:stickerColor
+                }},stickerText)
+            ),
+
+            // Format selector
+            React.createElement('div',{style:{marginTop:'1.2rem',textAlign:'center'}},
+              React.createElement('label',{style:{fontSize:'0.78rem',color:'var(--text-secondary)',marginBottom:'0.4rem',display:'block'}},'FORMATO DE DESCARGA'),
+              React.createElement('div',{className:'format-btns',style:{justifyContent:'center'}},
+                ['png','jpeg','svg'].map(f=>React.createElement('button',{
+                  key:f,className:'format-btn'+(dlFormat===f?' active':''),
+                  onClick:()=>setDlFormat(f)
+                },f.toUpperCase()))
+              )
+            ),
+
+            // Action buttons
+            React.createElement('div',{className:'actions'},
+              React.createElement('button',{className:'btn btn-primary',onClick:downloadQR},'⬇️ Descargar'),
+              React.createElement('button',{className:'btn btn-secondary',onClick:copyToClipboard},'📋 Copiar'),
+              navigator.share && React.createElement('button',{className:'btn btn-secondary',onClick:shareQR},'📤 Compartir')
+            )
+          )
+        ),
+
+        // Install PWA banner
+        showInstall && React.createElement('div',{className:'install-banner'},
+          React.createElement('span',null,'📲'),
+          React.createElement('p',null,'Instala QR Studio Pro en tu dispositivo'),
+          React.createElement('button',{className:'btn btn-primary',onClick:handleInstall,style:{padding:'0.5rem 1rem',fontSize:'0.78rem'}},'Instalar'),
+          React.createElement('button',{className:'close-install',onClick:()=>setShowInstall(false)},'✕')
+        ),
+
+        // Toast
+        toast && React.createElement('div',{className:'toast'},toast)
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    </script>
+</body>
+</html>
