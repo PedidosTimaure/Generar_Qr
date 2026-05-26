@@ -240,6 +240,60 @@ body::before {
 
 .sticker-text-top { margin-bottom: 0.6rem; }
 .sticker-text-bottom { margin-top: 0.6rem; }
+.sticker-text-bg {
+  /* inline-block is set via inline style for background to wrap tightly */
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Font upload */
+.font-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+
+.font-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.6rem;
+  border: 1px dashed var(--border);
+  background: rgba(99,102,241,0.08);
+  color: var(--accent-blue);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: all 0.25s;
+  flex: 1;
+}
+
+.font-upload-btn:hover {
+  border-color: var(--accent-blue);
+  background: rgba(99,102,241,0.15);
+}
+
+.font-clear-btn {
+  background: rgba(239,68,68,0.12);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #f87171;
+  width: 34px;
+  height: 34px;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.font-clear-btn:hover {
+  background: rgba(239,68,68,0.25);
+}
 
 /* Action buttons */
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.2rem; justify-content: center; }
