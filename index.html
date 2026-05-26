@@ -17,6 +17,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 <body>
     <div id="root"></div>
@@ -114,6 +115,9 @@
       const [stickerFontSize,setStickerFontSize] = useState(18);
       const [stickerColor,setStickerColor] = useState('#1e293b');
       const [stickerFont,setStickerFont] = useState('Outfit');
+      const [scannerOpen,setScannerOpen] = useState(false);
+      const [scannerResult,setScannerResult] = useState(null);
+      const [historyItems,setHistoryItems] = useState([]);
       const [customFontName,setCustomFontName] = useState('');
       const [customFontSrc,setCustomFontSrc] = useState('');
       const [stickerBgEnabled,setStickerBgEnabled] = useState(false);
@@ -126,13 +130,185 @@
       const [installPrompt,setInstallPrompt] = useState(null);
       const [showInstall,setShowInstall] = useState(false);
 
-      const qrRef = useRef(null);
       const qrInstance = useRef(null);
       const containerRef = useRef(null);
 
       const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(''),2500); };
 
       const updateField = (key,val) => setFields(prev=>({...prev,[key]:val}));
+
+      // History management
+      const loadHistory = () => {
+        try {
+          const saved = localStorage.getItem('qrHistory');
+          if (saved) setHistoryItems(JSON.parse(saved));
+        } catch(e) { /* ignore */ }
+      };
+
+      useEffect(loadHistory, []);
+
+      const saveToHistory = (thumbnailDataUrl) => {
+        const entry = {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2,4),
+          timestamp: new Date().toISOString(),
+          dataType, fields: {...fields},
+          dotType, dotColor, bgColor,
+          cornerType, cornerColor, cornerDotType, cornerDotColor,
+          logoSrc: logoSrc || '',
+          logoSize, logoMargin, hideBgDots, qrSize,
+          stickerText: stickerText || '',
+          stickerLines: stickerText ? stickerText.split('\n') : [''],
+          stickerPos, stickerFontSize, stickerColor, stickerFont,
+          customFontName, customFontSrc,
+          stickerBgEnabled, stickerBgColor, stickerBgOpacity,
+          stickerPadding, stickerBorderRadius,
+          thumbnail: thumbnailDataUrl || ''
+        };
+        const updated = [entry, ...historyItems].slice(0, 50);
+        setHistoryItems(updated);
+        try {
+          localStorage.setItem('qrHistory', JSON.stringify(updated));
+        } catch(e) {
+          // If storage full, remove thumbnail data and try again
+          try {
+            const stripped = updated.map((e,i) => i === 0 ? {...e, thumbnail: ''} : e);
+            localStorage.setItem('qrHistory', JSON.stringify(stripped));
+            setHistoryItems(stripped);
+          } catch(e2) { /* ignore */ }
+        }
+      };
+
+      const deleteHistoryEntry = (id) => {
+        const updated = historyItems.filter(e => e.id !== id);
+        setHistoryItems(updated);
+        localStorage.setItem('qrHistory', JSON.stringify(updated));
+      };
+
+      const clearHistory = () => {
+        setHistoryItems([]);
+        localStorage.removeItem('qrHistory');
+      };
+
+      const restoreHistoryEntry = (entry) => {
+        setDataType(entry.dataType);
+        setFields(entry.fields || {});
+        setDotType(entry.dotType);
+        setDotColor(entry.dotColor);
+        setBgColor(entry.bgColor);
+        setCornerType(entry.cornerType);
+        setCornerColor(entry.cornerColor);
+        setCornerDotType(entry.cornerDotType);
+        setCornerDotColor(entry.cornerDotColor);
+        if (entry.logoSrc) setLogoSrc(entry.logoSrc);
+        setLogoSize(entry.logoSize);
+        setLogoMargin(entry.logoMargin);
+        setHideBgDots(entry.hideBgDots);
+        setQrSize(entry.qrSize);
+        setStickerText(entry.stickerText || '');
+        setStickerPos(entry.stickerPos);
+        setStickerFontSize(entry.stickerFontSize);
+        setStickerColor(entry.stickerColor);
+        setStickerFont(entry.stickerFont);
+        if (entry.customFontName) {
+          setCustomFontName(entry.customFontName);
+          setCustomFontSrc(entry.customFontSrc);
+        }
+        setStickerBgEnabled(entry.stickerBgEnabled || false);
+        setStickerBgColor(entry.stickerBgColor || '#000000');
+        setStickerBgOpacity(entry.stickerBgOpacity || 0.3);
+        setStickerPadding(entry.stickerPadding || 8);
+        setStickerBorderRadius(entry.stickerBorderRadius || 6);
+        showToast('🔄 Configuración restaurada');
+        // Scroll to top of left panel
+        const panel = document.querySelector('.panel');
+        if (panel) panel.scrollTop = 0;
+      };
+
+      // QR Scanner
+      const handleScanUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: 'dontInvert'
+            });
+            if (code && code.data) {
+              setScannerResult(code.data);
+              showToast('✅ QR detectado: '+code.data.slice(0,40)+(code.data.length>40?'...':''));
+            } else {
+              // Try with inversion
+              const code2 = jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: 'attemptBoth'
+              });
+              if (code2 && code2.data) {
+                setScannerResult(code2.data);
+                showToast('✅ QR detectado: '+code2.data.slice(0,40)+(code2.data.length>40?'...':''));
+              } else {
+                setScannerResult(null);
+                showToast('❌ No se pudo decodificar el QR en la imagen');
+              }
+            }
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const fillFromScanner = () => {
+        if (!scannerResult) return;
+        // Detect type and fill
+        const val = scannerResult;
+        if (val.startsWith('http://') || val.startsWith('https://')) {
+          setDataType('url');
+          setFields(prev => ({...prev, url: val}));
+        } else if (val.startsWith('mailto:')) {
+          setDataType('email');
+          const addr = val.replace('mailto:', '').split('?')[0];
+          const params = new URLSearchParams(val.split('?')[1] || '');
+          setFields(prev => ({
+            ...prev,
+            emAddr: addr,
+            emSubject: params.get('subject') || '',
+            emBody: params.get('body') || ''
+          }));
+        } else if (val.startsWith('WIFI:')) {
+          setDataType('wifi');
+          const ssid = (val.match(/S:([^;]*)/) || ['',''])[1];
+          const pwd = (val.match(/P:([^;]*)/) || ['',''])[1];
+          const sec = (val.match(/T:([^;]*)/) || ['','WPA'])[1];
+          setFields(prev => ({...prev, wifiSSID: ssid, wifiPassword: pwd, wifiSecurity: sec}));
+        } else if (val.startsWith('BEGIN:VCARD')) {
+          setDataType('vcard');
+          const name = (val.match(/FN:([^\n]*)/) || ['',''])[1];
+          const tel = (val.match(/TEL:([^\n]*)/) || ['',''])[1];
+          const email = (val.match(/EMAIL:([^\n]*)/) || ['',''])[1];
+          const org = (val.match(/ORG:([^\n]*)/) || ['',''])[1];
+          setFields(prev => ({...prev, vcName: name, vcPhone: tel, vcEmail: email, vcOrg: org}));
+        } else if (val.startsWith('https://wa.me/')) {
+          setDataType('whatsapp');
+          const phone = val.match(/wa\.me\/([^?]*)/);
+          const msg = val.match(/text=([^&]*)/);
+          setFields(prev => ({
+            ...prev,
+            waPhone: phone ? phone[1] : '',
+            waMessage: msg ? decodeURIComponent(msg[1]) : ''
+          }));
+        } else {
+          setDataType('text');
+          setFields(prev => ({...prev, text: val}));
+        }
+        setScannerOpen(false);
+        showToast('✅ Datos del QR aplicados al formulario');
+      };
 
       // PWA Install
       useEffect(()=>{
@@ -202,20 +378,47 @@
         reader.readAsDataURL(file);
       };
 
-      const drawStickerText = (ctx, text, x, y) => {
-        // Draw background if enabled
+      const drawStickerTextBlock = (ctx, textBlock, cx, yStart) => {
+        const lines = textBlock.split('\n').filter(l => l.trim().length > 0);
+        if (lines.length === 0) return lines.length;
+        const lineH = Math.round(stickerFontSize * 1.3);
+        const blockH = lines.length * lineH;
+        ctx.font = `bold ${stickerFontSize}px ${stickerFont}, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = stickerColor;
+
+        // Draw background if enabled (single rounded rect for entire block)
         if (stickerBgEnabled) {
-          const textWidth = ctx.measureText(text).width;
-          const bgLeft = x - textWidth / 2 - stickerPadding;
-          const bgTop = y - stickerFontSize * 0.85 - stickerPadding;
-          const bgWidth = textWidth + stickerPadding * 2;
-          const bgHeight = stickerFontSize + stickerPadding * 2;
+          let maxWidth = 0;
+          lines.forEach(line => {
+            const w = ctx.measureText(line).width;
+            if (w > maxWidth) maxWidth = w;
+          });
+          const bgLeft = cx - maxWidth / 2 - stickerPadding;
+          const bgTop = yStart - stickerFontSize * 0.85 - stickerPadding;
+          const bgWidth = maxWidth + stickerPadding * 2;
+          const bgHeight = blockH + stickerPadding * 2;
           ctx.fillStyle = hexToRgba(stickerBgColor, stickerBgOpacity);
           ctx.save();
           drawRoundRect(ctx, bgLeft, bgTop, bgWidth, bgHeight, stickerBorderRadius);
           ctx.restore();
+          ctx.fillStyle = stickerColor;
+          ctx.font = `bold ${stickerFontSize}px ${stickerFont}, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
         }
-        ctx.fillText(text, x, y);
+
+        // Draw each line
+        lines.forEach((line, i) => {
+          ctx.fillText(line, cx, yStart + i * lineH);
+        });
+
+        return lines.length;
+      };
+
+      const countStickerLines = (text) => {
+        return text.split('\n').filter(l => l.trim().length > 0).length;
       };
 
       const renderStickerToCanvas = (img) => {
@@ -223,11 +426,13 @@
         const pad = Math.round(1.5 * rem);
         const gap = Math.round(0.6 * rem);
         const lineH = Math.round(stickerFontSize * 1.3);
+        const numLines = stickerText.trim() ? countStickerLines(stickerText) : 0;
+        const blockH = numLines * lineH;
 
         let qrY = pad;
         let totalH = img.height + pad * 2;
-        if (stickerPos === 'top' || stickerPos === 'both') totalH += lineH + gap;
-        if (stickerPos === 'bottom' || stickerPos === 'both') totalH += gap + lineH;
+        if ((stickerPos === 'top' || stickerPos === 'both') && numLines > 0) totalH += blockH + gap;
+        if ((stickerPos === 'bottom' || stickerPos === 'both') && numLines > 0) totalH += gap + blockH;
 
         const canvas = document.createElement('canvas');
         canvas.width = img.width + pad * 2;
@@ -235,21 +440,17 @@
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.font = `bold ${stickerFontSize}px ${stickerFont}, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillStyle = stickerColor;
 
-              if (stickerPos === 'top' || stickerPos === 'both') {
-                drawStickerText(ctx, stickerText, canvas.width / 2, pad + stickerFontSize);
-                qrY = pad + lineH + gap;
-              }
+        if ((stickerPos === 'top' || stickerPos === 'both') && numLines > 0) {
+          const numDrawn = drawStickerTextBlock(ctx, stickerText, canvas.width / 2, pad + stickerFontSize);
+          qrY = pad + blockH + gap;
+        }
 
         ctx.drawImage(img, pad, qrY);
 
-        if (stickerPos === 'bottom' || stickerPos === 'both') {
+        if ((stickerPos === 'bottom' || stickerPos === 'both') && numLines > 0) {
           const textY = qrY + img.height + gap + stickerFontSize;
-          drawStickerText(ctx, stickerText, canvas.width / 2, textY);
+          drawStickerTextBlock(ctx, stickerText, canvas.width / 2, textY);
         }
 
         return canvas;
@@ -263,6 +464,8 @@
         // Standard formats without sticker text use the library directly (except PDF)
         if (!hasSticker && dlFormat !== 'pdf') {
           qrInstance.current.download({name:'qr-studio',extension:dlFormat});
+          // Save to history with a generated thumbnail
+          generateThumbnailAndSave();
           showToast('⬇️ QR descargado');
           return;
         }
@@ -276,7 +479,6 @@
               const canvas = renderStickerToCanvas(img);
 
               if (dlFormat === 'pdf') {
-                // Export as PDF via jsPDF
                 try {
                   const { jsPDF } = window.jspdf;
                   const margin = 20;
@@ -293,7 +495,6 @@
                   showToast('❌ Error al generar PDF');
                 }
               } else {
-                // Export as image (canvas only supports png/jpeg, so svg falls back to png)
                 const ext = dlFormat === 'pdf' ? 'png' : dlFormat;
                 const mime = dlFormat === 'jpeg' ? 'jpeg' : 'png';
                 const link = document.createElement('a');
@@ -302,6 +503,33 @@
                 link.click();
                 showToast('⬇️ Sticker descargado' + (dlFormat === 'svg' ? ' (exportado como PNG)' : ''));
               }
+
+              // Save to history with thumbnail
+              const thumbCanvas = document.createElement('canvas');
+              thumbCanvas.width = 70;
+              thumbCanvas.height = 70;
+              const tCtx = thumbCanvas.getContext('2d');
+              tCtx.drawImage(img, 0, 0, 70, 70);
+              saveToHistory(thumbCanvas.toDataURL('image/png'));
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(blob);
+        });
+      };
+
+      const generateThumbnailAndSave = () => {
+        qrInstance.current.getRawData('png').then(blob => {
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+              const thumbCanvas = document.createElement('canvas');
+              thumbCanvas.width = 70;
+              thumbCanvas.height = 70;
+              const tCtx = thumbCanvas.getContext('2d');
+              tCtx.drawImage(img, 0, 0, 70, 70);
+              saveToHistory(thumbCanvas.toDataURL('image/png'));
             };
             img.src = ev.target.result;
           };
@@ -469,8 +697,8 @@
             // Sticker
             Section({title:'Texto / Sticker',icon:'🏷️',defaultOpen:false,children:React.createElement(React.Fragment,null,
               React.createElement('div',{className:'form-group'},
-                React.createElement('label',null,'Texto del sticker'),
-                React.createElement('input',{className:'form-input',placeholder:'Ej: Escanéame!',value:stickerText,onChange:e=>setStickerText(e.target.value)})
+                React.createElement('label',null,'Texto del sticker (una línea por renglón)'),
+                React.createElement('textarea',{className:'form-input form-textarea',rows:3,placeholder:'Ej: Escanéame!',value:stickerText,onChange:e=>setStickerText(e.target.value)})
               ),
               React.createElement('div',{className:'form-row'},
                 React.createElement('div',{className:'form-group'},
@@ -554,6 +782,78 @@
                   React.createElement('span',{className:'range-val'},qrSize+'px')
                 )
               )
+            }),
+
+            React.createElement('hr',{style:{border:'none',borderTop:'1px solid var(--border)',margin:'1rem 0'}}),
+
+            // QR Scanner
+            React.createElement('div',{className:'form-group'},
+              React.createElement('label',null,'📷 Escanear QR'),
+              !scannerOpen ? React.createElement('button',{className:'btn btn-secondary',style:{width:'100%',justifyContent:'center'},onClick:()=>setScannerOpen(true)},
+                '📷 Escanear código QR desde una imagen'
+              ) : React.createElement('div',{className:'scanner-box'},
+                React.createElement('div',{className:'scanner-upload',onClick:()=>document.getElementById('scanInput').click()},
+                  React.createElement('input',{id:'scanInput',type:'file',accept:'image/*',onChange:handleScanUpload,style:{display:'none'}}),
+                  React.createElement('div',{className:'upload-icon'},'📤'),
+                  React.createElement('p',null,'Haz clic para seleccionar una imagen con QR')
+                ),
+                scannerResult && React.createElement('div',{className:'scanner-result'},
+                  React.createElement('div',{className:'scanner-result-text'},scannerResult),
+                  React.createElement('div',{className:'scanner-result-actions'},
+                    React.createElement('button',{className:'btn btn-primary',style:{padding:'0.4rem 0.8rem',fontSize:'0.75rem'},onClick:fillFromScanner},
+                      '📋 Aplicar al formulario'
+                    ),
+                    React.createElement('button',{className:'btn btn-secondary',style:{padding:'0.4rem 0.8rem',fontSize:'0.75rem'},onClick:()=>{setScannerOpen(false);setScannerResult(null)}},
+                      '✕ Cerrar'
+                    )
+                  )
+                ),
+                !scannerResult && React.createElement('button',{className:'btn btn-secondary',style:{width:'100%',justifyContent:'center',marginTop:'0.5rem'},onClick:()=>{setScannerOpen(false);setScannerResult(null)}},
+                  'Cancelar'
+                )
+              )
+            ),
+
+            React.createElement('hr',{style:{border:'none',borderTop:'1px solid var(--border)',margin:'1rem 0'}}),
+
+            // History
+            Section({title:'Historial',icon:'📜',defaultOpen:false,children:
+              React.createElement('div',{className:'history-section'},
+                historyItems.length === 0 
+                  ? React.createElement('p',{style:{color:'var(--text-secondary)',fontSize:'0.8rem',textAlign:'center',padding:'1rem 0'}},
+                      'Aún no hay códigos QR generados.\nLos QR se guardan automáticamente al descargar.'
+                    )
+                  : React.createElement(React.Fragment,null,
+                      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.6rem'}},
+                        React.createElement('span',{style:{fontSize:'0.75rem',color:'var(--text-secondary)'}},historyItems.length+' QR guardados'),
+                        React.createElement('button',{className:'btn btn-secondary',style:{padding:'0.3rem 0.6rem',fontSize:'0.7rem',color:'#f87171'},onClick:()=>{
+                          if (confirm('¿Eliminar todo el historial?')) clearHistory();
+                        }},'🗑️ Limpiar todo')
+                      ),
+                      React.createElement('div',{className:'history-list'},
+                        historyItems.map(entry => React.createElement('div',{key:entry.id,className:'history-item'},
+                          React.createElement('div',{className:'history-thumb'},
+                            entry.thumbnail 
+                              ? React.createElement('img',{src:entry.thumbnail,alt:'QR thumbnail',style:{width:'50px',height:'50px',borderRadius:'0.3rem',objectFit:'cover'}})
+                              : React.createElement('div',{style:{width:'50px',height:'50px',background:'var(--bg-input)',borderRadius:'0.3rem',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.2rem'}},'📱')
+                          ),
+                          React.createElement('div',{className:'history-info'},
+                            React.createElement('div',{className:'history-type'},DATA_TYPES.find(t=>t.id===entry.dataType)?.label || entry.dataType),
+                            React.createElement('div',{className:'history-preview'},
+                              entry.fields?.url || entry.fields?.text || entry.fields?.wifiSSID || entry.fields?.vcName || entry.fields?.waPhone || entry.fields?.emAddr || ''
+                            ),
+                            React.createElement('div',{className:'history-date'},
+                              new Date(entry.timestamp).toLocaleDateString('es-ES',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})
+                            )
+                          ),
+                          React.createElement('div',{className:'history-actions'},
+                            React.createElement('button',{className:'history-btn history-btn-restore',title:'Restaurar',onClick:()=>restoreHistoryEntry(entry)},'↩'),
+                            React.createElement('button',{className:'history-btn history-btn-del',title:'Eliminar',onClick:()=>deleteHistoryEntry(entry.id)},'✕')
+                          )
+                        ))
+                      )
+                    )
+              )
             })
           ),
 
@@ -564,30 +864,32 @@
             React.createElement('div',{className:'qr-frame',style:{backgroundColor:bgColor}},
               stickerText && (stickerPos==='top'||stickerPos==='both') &&
                 React.createElement('div',{
-                  className:'sticker-text'+(stickerBgEnabled?' sticker-text-bg':'')+' sticker-text-top',
+                  className:'sticker-text sticker-text-top'+(stickerBgEnabled?' sticker-text-bg':''),
                   style:{
                     fontFamily:stickerFont+',sans-serif',fontSize:stickerFontSize+'px',color:stickerColor,
+                    whiteSpace:'pre-wrap',
                     ...(stickerBgEnabled ? {
                       backgroundColor:hexToRgba(stickerBgColor,stickerBgOpacity),
                       padding:stickerPadding+'px',
                       borderRadius:stickerBorderRadius+'px',
                       display:'inline-block',
-                      marginLeft:'auto',marginRight:'auto',
+                      maxWidth:'100%',
                     } : {})
                   }
                 },stickerText),
               React.createElement('div',{className:'qr-render',ref:containerRef}),
               stickerText && (stickerPos==='bottom'||stickerPos==='both') &&
                 React.createElement('div',{
-                  className:'sticker-text'+(stickerBgEnabled?' sticker-text-bg':'')+' sticker-text-bottom',
+                  className:'sticker-text sticker-text-bottom'+(stickerBgEnabled?' sticker-text-bg':''),
                   style:{
                     fontFamily:stickerFont+',sans-serif',fontSize:stickerFontSize+'px',color:stickerColor,
+                    whiteSpace:'pre-wrap',
                     ...(stickerBgEnabled ? {
                       backgroundColor:hexToRgba(stickerBgColor,stickerBgOpacity),
                       padding:stickerPadding+'px',
                       borderRadius:stickerBorderRadius+'px',
                       display:'inline-block',
-                      marginLeft:'auto',marginRight:'auto',
+                      maxWidth:'100%',
                     } : {})
                   }
                 },stickerText)
