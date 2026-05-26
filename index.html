@@ -504,12 +504,12 @@
                 showToast('⬇️ Sticker descargado' + (dlFormat === 'svg' ? ' (exportado como PNG)' : ''));
               }
 
-              // Save to history with thumbnail
+              // Save to history with thumbnail (from rendered canvas with sticker)
               const thumbCanvas = document.createElement('canvas');
               thumbCanvas.width = 70;
               thumbCanvas.height = 70;
               const tCtx = thumbCanvas.getContext('2d');
-              tCtx.drawImage(img, 0, 0, 70, 70);
+              tCtx.drawImage(canvas, 0, 0, 70, 70);
               saveToHistory(thumbCanvas.toDataURL('image/png'));
             };
             img.src = ev.target.result;
@@ -519,7 +519,7 @@
       };
 
       const generateThumbnailAndSave = () => {
-        qrInstance.current.getRawData('png').then(blob => {
+        getQrBlobWithSticker().then(blob => {
           const reader = new FileReader();
           reader.onload = ev => {
             const img = new Image();
@@ -534,15 +534,41 @@
             img.src = ev.target.result;
           };
           reader.readAsDataURL(blob);
+        }).catch(() => {});
+      };
+
+      const getQrBlobWithSticker = async () => {
+        const hasSticker = stickerText.trim().length > 0;
+        if (!hasSticker) {
+          return await qrInstance.current.getRawData('png');
+        }
+        // Render sticker text onto canvas first
+        const blob = await qrInstance.current.getRawData('png');
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = renderStickerToCanvas(img);
+              canvas.toBlob(b => {
+                if (b) resolve(b);
+                else reject(new Error('Canvas toBlob failed'));
+              }, 'image/png');
+            };
+            img.onerror = reject;
+            img.src = ev.target.result;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
         });
       };
 
       const shareQR = async()=>{
         if(!navigator.share||!qrInstance.current)return showToast('Compartir no soportado');
         try{
-          const blob=await qrInstance.current.getRawData('png');
-          const file=new File([blob],'qr-code.png',{type:'image/png'});
-          await navigator.share({files:[file],title:'Mi QR Code'});
+          const blob = await getQrBlobWithSticker();
+          const file=new File([blob],'qr-sticker.png',{type:'image/png'});
+          await navigator.share({files:[file],title:'Mi QR'});
           showToast('✅ Compartido');
         }catch(e){showToast('Compartir cancelado');}
       };
@@ -550,7 +576,7 @@
       const copyToClipboard = async()=>{
         if(!qrInstance.current)return;
         try{
-          const blob=await qrInstance.current.getRawData('png');
+          const blob = await getQrBlobWithSticker();
           await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
           showToast('📋 Copiado al portapapeles');
         }catch(e){showToast('Error al copiar');}
